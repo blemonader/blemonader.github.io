@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>恐龙跑步游戏</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #f7f7f7;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Courier New', monospace;
+      user-select: none;
+      padding: 16px;
+    }
+    h1 {
+      font-size: clamp(16px, 4vw, 22px);
+      color: #555;
+      margin-bottom: 8px;
+      letter-spacing: 2px;
+    }
+    #score-board {
+      font-size: clamp(13px, 3.5vw, 18px);
+      color: #555;
+      margin-bottom: 6px;
+      width: 100%;
+      max-width: 800px;
+      text-align: right;
+    }
+    #game-wrapper {
+      width: 100%;
+      max-width: 800px;
+    }
+    #game-container {
+      position: relative;
+      width: 100%;
+      /* 保持16:4宽高比（原800x200）*/
+      padding-bottom: 25%;
+      border-bottom: 3px solid #555;
+      overflow: hidden;
+      background: #fff;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    /* 内部绝对定位子元素用这个父层 */
+    #game-inner {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+    }
+    #dino {
+      position: absolute;
+      bottom: 0;
+      /* left 和 尺寸由JS动态设置 */
+    }
+    .cactus {
+      position: absolute;
+      bottom: 0;
+    }
+    #overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,0.85);
+      z-index: 10;
+      cursor: pointer;
+    }
+    #overlay .msg {
+      font-size: clamp(16px, 4vw, 26px);
+      font-weight: bold;
+      color: #333;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+    #overlay .sub {
+      font-size: clamp(11px, 2.5vw, 15px);
+      color: #777;
+      text-align: center;
+      line-height: 1.6;
+    }
+    /* 地面纹理装饰 */
+    .ground-deco {
+      position: absolute;
+      bottom: 3px;
+      height: 6px;
+      width: 20px;
+      background: #ccc;
+      border-radius: 2px;
+    }
+    /* 移动端提示按钮区域 */
+    #tap-hint {
+      margin-top: 12px;
+      font-size: clamp(11px, 2.5vw, 14px);
+      color: #aaa;
+    }
+  </style>
+</head>
+<body>
+  <h1>🦕 DINO RUN</h1>
+  <div id="game-wrapper">
+  <div id="score-board">分数：<span id="score">0</span>&nbsp;&nbsp;最高：<span id="hi-score">0</span></div>
+  <div id="game-container">
+    <div id="game-inner">
+    <!-- 恐龙 SVG -->
+    <svg id="dino" viewBox="0 0 50 60" xmlns="http://www.w3.org/2000/svg">
+      <!-- 身体 -->
+      <rect x="10" y="15" width="28" height="22" rx="4" fill="#555"/>
+      <!-- 头部 -->
+      <rect x="28" y="4" width="18" height="16" rx="4" fill="#555"/>
+      <!-- 眼睛 -->
+      <circle cx="42" cy="10" r="2.5" fill="white"/>
+      <circle id="dino-eye" cx="43" cy="10" r="1.5" fill="#222"/>
+      <!-- 嘴巴 -->
+      <rect x="44" y="15" width="6" height="2" rx="1" fill="#555"/>
+      <!-- 尾巴 -->
+      <polygon points="10,30 0,40 12,37" fill="#555"/>
+      <!-- 前腿 -->
+      <rect id="leg1" x="24" y="37" width="7" height="14" rx="3" fill="#555"/>
+      <!-- 后腿 -->
+      <rect id="leg2" x="14" y="37" width="7" height="14" rx="3" fill="#555"/>
+      <!-- 小手臂 -->
+      <rect x="34" y="22" width="5" height="9" rx="2" fill="#555"/>
+    </svg>
+
+    <!-- 装饰地面 -->
+    <div class="ground-deco" style="left:12%"></div>
+    <div class="ground-deco" style="left:37%; width:12px"></div>
+    <div class="ground-deco" style="left:62%; width:30px"></div>
+    <div class="ground-deco" style="left:81%; width:15px"></div>
+
+    <!-- 开始/结束遮罩 -->
+    <div id="overlay">
+      <div class="msg">点击 / 按空格 开始</div>
+      <div class="sub">点击屏幕或按空格键起跳<br>撞到仙人掌游戏结束</div>
+    </div>
+    </div>
+  </div>
+  </div>
+
+  <script>
+    const container = document.getElementById('game-container');
+    const inner = document.getElementById('game-inner');
+    const dinoEl = document.getElementById('dino');
+    const overlay = document.getElementById('overlay');
+    const scoreEl = document.getElementById('score');
+    const hiScoreEl = document.getElementById('hi-score');
+    const leg1 = document.getElementById('leg1');
+    const leg2 = document.getElementById('leg2');
+
+    // 虚拟坐标系（始终以此为基准，再乘以 scale）
+    const VW = 800, VH = 200;
+    const GROUND = 0;
+    const JUMP_V = -16;
+    const GRAVITY = 0.8;
+    const DINO_VX = 60;   // 虚拟坐标中恐龙左边距
+    const DINO_VW = 46;
+    const DINO_VH = 58;
+
+    let gameState = 'idle';
+    let dinoY = GROUND;   // 虚拟坐标 bottom 值
+    let velY = 0;
+    let isJumping = false;
+    let score = 0;
+    let hiScore = 0;
+    let speed = 6;
+    let frameCount = 0;
+    let cactuses = [];
+    let animId = null;
+    let legPhase = 0;
+
+    // 获取当前缩放比（容器实际宽 / 虚拟宽）
+    function getScale() {
+      return container.clientWidth / VW;
+    }
+
+    // 更新恐龙大小和位置
+    function updateDino() {
+      const s = getScale();
+      dinoEl.style.width  = (DINO_VW * s) + 'px';
+      dinoEl.style.height = (DINO_VH * s) + 'px';
+      dinoEl.style.left   = (DINO_VX * s) + 'px';
+      dinoEl.style.bottom = (dinoY * s) + 'px';
+    }
+
+    function spawnCactus() {
+      const types = [
+        { w: 20, h: 40 },
+        { w: 30, h: 55 },
+        { w: 20, h: 30 },
+        { w: 50, h: 45 },
+      ];
+      const t = types[Math.floor(Math.random() * types.length)];
+      const el = document.createElement('div');
+      el.classList.add('cactus');
+
+      const svg = `<svg viewBox="0 0 ${t.w} ${t.h}" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">
+        <rect x="${t.w/2-5}" y="0" width="10" height="${t.h}" rx="4" fill="#4a7c4e"/>
+        <rect x="${t.w/2-14}" y="${t.h*0.3}" width="12" height="7" rx="3" fill="#4a7c4e"/>
+        <rect x="${t.w/2-14}" y="${t.h*0.15}" width="7" height="${t.h*0.2}" rx="3" fill="#4a7c4e"/>
+        <rect x="${t.w/2+2}" y="${t.h*0.45}" width="12" height="7" rx="3" fill="#4a7c4e"/>
+        <rect x="${t.w/2+6}" y="${t.h*0.25}" width="7" height="${t.h*0.25}" rx="3" fill="#4a7c4e"/>
+      </svg>`;
+      el.innerHTML = svg;
+      inner.appendChild(el);
+      // 仙人掌数据用虚拟坐标存储
+      cactuses.push({ el, vx: VW + 60, vw: t.w, vh: t.h });
+    }
+
+    function updateCactus(c) {
+      const s = getScale();
+      c.el.style.left   = (c.vx * s) + 'px';
+      c.el.style.width  = (c.vw * s) + 'px';
+      c.el.style.height = (c.vh * s) + 'px';
+    }
+
+    function removeCactus(obj) {
+      inner.removeChild(obj.el);
+      cactuses = cactuses.filter(c => c !== obj);
+    }
+
+    function startGame() {
+      cactuses.forEach(c => inner.removeChild(c.el));
+      cactuses = [];
+      dinoY = GROUND;
+      velY = 0;
+      isJumping = false;
+      score = 0;
+      speed = 6;
+      frameCount = 0;
+      legPhase = 0;
+      overlay.style.display = 'none';
+      gameState = 'running';
+      scoreEl.textContent = '0';
+      if (animId) cancelAnimationFrame(animId);
+      loop();
+    }
+
+    function jump() {
+      if (!isJumping) {
+        velY = JUMP_V;
+        isJumping = true;
+      }
+    }
+
+    function handleAction() {
+      if (gameState === 'idle' || gameState === 'dead') {
+        startGame();
+      } else if (gameState === 'running') {
+        jump();
+      }
+    }
+
+    function checkCollision(cactus) {
+      // 全部用虚拟坐标计算
+      const dLeft   = DINO_VX + 8;
+      const dRight  = DINO_VX + DINO_VW - 8;
+      const dBottom = VH - dinoY;
+      const dTop    = VH - dinoY - DINO_VH + 10;
+
+      const cLeft   = cactus.vx + 4;
+      const cRight  = cactus.vx + cactus.vw - 4;
+      const cTop    = VH - cactus.vh + 2;
+      const cBottom = VH;
+
+      return dRight > cLeft && dLeft < cRight && dBottom > cTop && dTop < cBottom;
+    }
+
+    let nextCactusIn = 90;
+
+    function loop() {
+      frameCount++;
+
+      score = Math.floor(frameCount / 6);
+      scoreEl.textContent = score;
+      if (score > 0 && score % 100 === 0) {
+        speed = Math.min(6 + score / 100, 16);
+      }
+
+      // 跳跃物理
+      if (isJumping) {
+        dinoY -= velY;
+        velY += GRAVITY;
+        if (dinoY <= GROUND) {
+          dinoY = GROUND;
+          velY = 0;
+          isJumping = false;
+        }
+      }
+
+      updateDino();
+
+      // 腿部动画
+      if (!isJumping) {
+        legPhase += 0.25;
+        const a = Math.sin(legPhase) * 6;
+        leg1.setAttribute('y', 37 + a);
+        leg1.setAttribute('height', 14 - Math.abs(a));
+        leg2.setAttribute('y', 37 - a);
+        leg2.setAttribute('height', 14 - Math.abs(a));
+      } else {
+        leg1.setAttribute('y', 37);
+        leg1.setAttribute('height', 14);
+        leg2.setAttribute('y', 40);
+        leg2.setAttribute('height', 8);
+      }
+
+      // 生成仙人掌
+      nextCactusIn--;
+      if (nextCactusIn <= 0) {
+        spawnCactus();
+        nextCactusIn = Math.floor(60 + Math.random() * 90);
+      }
+
+      // 移动仙人掌 & 碰撞检测
+      for (let i = cactuses.length - 1; i >= 0; i--) {
+        const c = cactuses[i];
+        c.vx -= speed;
+        updateCactus(c);
+
+        if (c.vx + c.vw < 0) {
+          removeCactus(c);
+          continue;
+        }
+        if (checkCollision(c)) {
+          gameOver();
+          return;
+        }
+      }
+
+      animId = requestAnimationFrame(loop);
+    }
+
+    function gameOver() {
+      gameState = 'dead';
+      if (score > hiScore) {
+        hiScore = score;
+        hiScoreEl.textContent = hiScore;
+      }
+      overlay.innerHTML = `
+        <div class="msg">💥 游戏结束！</div>
+        <div class="sub" style="margin-bottom:6px">得分：${score}</div>
+        <div class="sub">点击屏幕或按空格键重新开始</div>
+      `;
+      overlay.style.display = 'flex';
+      dinoEl.style.transform = 'rotate(20deg)';
+      setTimeout(() => dinoEl.style.transform = '', 500);
+      cancelAnimationFrame(animId);
+    }
+
+    // 键盘
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        handleAction();
+      }
+    });
+
+    // 鼠标按下（mousedown 无延迟，比 click 快约 300ms）
+    document.addEventListener('mousedown', (e) => {
+      handleAction();
+    });
+
+    // 触摸（阻止默认避免触发额外click）
+    document.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      handleAction();
+    }, { passive: false });
+
+    // 窗口resize时刷新恐龙和仙人掌位置
+    window.addEventListener('resize', () => {
+      updateDino();
+      cactuses.forEach(updateCactus);
+    });
+
+    // 初始化恐龙尺寸
+    updateDino();
+  </script>
+</body>
+</html>
